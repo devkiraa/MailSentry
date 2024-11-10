@@ -98,11 +98,16 @@ def validate_email_data(data):
 
 def check_and_set_credentials():
     """Check if the email credentials are set in the .env file, else prompt the user."""
+    if not os.path.exists('.env'):
+        with open('.env', 'w'): pass  # Create the .env file if it doesn't exist
+
     if not os.getenv("USER_EMAIL"):
         user_email = input("Enter your email address: ")
         set_key('.env', 'USER_EMAIL', user_email)
 
     if not os.getenv("USER_APP_PASSWORD"):
+        print("To generate an app password for Gmail, visit this link:")
+        print("https://myaccount.google.com/apppasswords")
         user_password = input("Enter your app password (use app-specific password if using Gmail): ")
         set_key('.env', 'USER_APP_PASSWORD', user_password)
 
