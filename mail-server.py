@@ -8,13 +8,14 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv, set_key
 from datetime import datetime
 import uuid
-from concurrent.futures import ThreadPoolExecutor  # Import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
+import csv
 import commands  # Import the custom commands file
 import threading
 
 # Suppress Flask's request log messages
 log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)  # Set to ERROR to avoid INFO-level request logs
+log.setLevel(logging.ERROR)
 
 # Suppress Flask's 'Serving Flask app' and 'Debug mode' messages
 flask_log = logging.getLogger('flask')
@@ -25,16 +26,7 @@ load_dotenv()
 
 # Flask app
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "default_secret_key")  # Secret key for secure session management
-
-# Configure logging to a file
-logging.basicConfig(
-    filename="email_log.txt",
-    level=logging.INFO,
-    format="%(asctime)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger()
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "default_secret_key")
 
 # Dictionary to track the status of email requests
 email_status = {}
@@ -45,16 +37,25 @@ EMAIL_REGEX = re.compile(r"[^@]+@[^@]+\.[^@]+")
 # Create a thread pool executor to manage the email sending asynchronously
 executor = ThreadPoolExecutor(max_workers=5)
 
-def log_email_to_file(request_id, sender_email, recipient, status):
-    """Log email request details to a text file."""
+# CSV file path
+CSV_FILE_PATH = "email_log.csv"
+
+def initialize_csv_log():
+    """Create a CSV log file if it doesn't exist and add headers."""
+    if not os.path.exists(CSV_FILE_PATH):
+        with open(CSV_FILE_PATH, mode="w", newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["Request ID", "Sender Email", "Recipient", "Subject", "Date", "Status"])
+
+def log_email_to_csv(request_id, sender_email, recipient, subject, status):
+    """Log email request details to a CSV file."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_message = f"Request ID: {request_id}, Sender: {sender_email}, Recipient: {recipient}, Date: {now}, Status: {status}\n"
-    # Buffer logs or write periodically
-    with open("email_log.txt", "a") as log_file:
-        log_file.write(log_message)
+    with open(CSV_FILE_PATH, mode="a", newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([request_id, sender_email, recipient, subject, now, status])
 
 def send_email(subject, recipient, body, is_html, request_id, sender_email, sender_password, sender_name):
-    """Send an email and log the action in a text file."""
+    """Send an email and log the action in a CSV file."""
     try:
         # Prepare the email
         message = MIMEMultipart()
@@ -72,12 +73,12 @@ def send_email(subject, recipient, body, is_html, request_id, sender_email, send
             server.login(sender_email, sender_password)
             server.send_message(message)
 
-        # Log success to the file
-        log_email_to_file(request_id, sender_email, recipient, "sent")
+        # Log success to the CSV file
+        log_email_to_csv(request_id, sender_email, recipient, subject, "sent")
         email_status[request_id] = "sent"  # Update the status
     except Exception as e:
-        # Log failure to the file
-        log_email_to_file(request_id, sender_email, recipient, f"failed ({e})")
+        # Log failure to the CSV file
+        log_email_to_csv(request_id, sender_email, recipient, subject, f"failed ({e})")
         email_status[request_id] = f"failed ({e})"  # Update the status
 
 def validate_email_data(data):
@@ -97,7 +98,6 @@ def validate_email_data(data):
 
 def check_and_set_credentials():
     """Check if the email credentials are set in the .env file, else prompt the user."""
-    # Check if the necessary credentials are already in the environment
     if not os.getenv("USER_EMAIL"):
         user_email = input("Enter your email address: ")
         set_key('.env', 'USER_EMAIL', user_email)
@@ -147,6 +147,9 @@ def interactive_terminal():
     commands.interactive_terminal()  # Call the interactive terminal from commands.py
 
 if __name__ == "__main__":
+    # Initialize CSV log
+    initialize_csv_log()
+
     # Check and set credentials if they don't exist in the .env file
     check_and_set_credentials()
 
