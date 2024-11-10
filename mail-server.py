@@ -5,6 +5,8 @@ from flask import Flask, request, jsonify, abort
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from dotenv import load_dotenv, set_key
 from datetime import datetime
 import uuid
@@ -12,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import csv
 import commands  # Import the custom commands file
 import threading
+import time
 
 # Suppress Flask's request log messages
 log = logging.getLogger('werkzeug')
@@ -47,27 +50,33 @@ def initialize_csv_log():
             writer = csv.writer(file)
             writer.writerow(["Request ID", "Sender Email", "Recipient", "Subject", "Date", "Status"])
 
-def log_email_to_csv(request_id, sender_email, recipient, subject, status):
-    """Log email request details to a CSV file."""
+def log_email_to_csv(request_id, sender_email, recipient, subject, status, error_details=None):
+    """Log email request details to a CSV file with detailed error info."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(CSV_FILE_PATH, mode="a", newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([request_id, sender_email, recipient, subject, now, status])
+        if error_details:
+            writer.writerow([request_id, sender_email, recipient, subject, now, status, error_details])
+        else:
+            writer.writerow([request_id, sender_email, recipient, subject, now, status])
 
-def send_email(subject, recipient, body, is_html, request_id, sender_email, sender_password, sender_name):
-    """Send an email and log the action in a CSV file."""
+def send_email(subject, recipient, body, is_html, request_id, sender_email, sender_password, sender_name, cc=None, bcc=None):
+    """Send an email to multiple recipients and log the action in a CSV file."""
     try:
-        # Prepare the email
         message = MIMEMultipart()
         message["From"] = f"{sender_name} <{sender_email}>"
         message["To"] = recipient
+        if cc:
+            message["Cc"] = cc
+        if bcc:
+            message["Bcc"] = bcc
         message["Subject"] = subject
         message.attach(MIMEText(body, "html" if is_html else "plain"))
 
         # Send the email
         smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
         smtp_port = int(os.getenv("SMTP_PORT", 587))
-
+        
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
             server.login(sender_email, sender_password)
@@ -80,6 +89,54 @@ def send_email(subject, recipient, body, is_html, request_id, sender_email, send
         # Log failure to the CSV file
         log_email_to_csv(request_id, sender_email, recipient, subject, f"failed ({e})")
         email_status[request_id] = f"failed ({e})"  # Update the status
+
+def send_email_with_retry(subject, recipients, body, is_html, request_id, sender_email, sender_password, sender_name, cc=None, bcc=None, retries=3, delay=5):
+    """Send an email with retry mechanism using exponential backoff."""
+    attempt = 0
+    while attempt < retries:
+        try:
+            send_email(subject, recipients, body, is_html, request_id, sender_email, sender_password, sender_name, cc, bcc)
+            return
+        except Exception as e:
+            attempt += 1
+            if attempt < retries:
+                print(f"Attempt {attempt} failed. Retrying in {delay} seconds...")
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                print(f"Failed to send email after {retries} attempts.")
+                email_status[request_id] = f"failed ({e})"
+
+def send_email_with_attachment(subject, recipient, body, attachment_path, request_id, sender_email, sender_password, sender_name, cc=None, bcc=None):
+    """Send an email with an attachment."""
+    message = MIMEMultipart()
+    message["From"] = f"{sender_name} <{sender_email}>"
+    message["To"] = recipient
+    if cc:
+        message["Cc"] = cc
+    if bcc:
+        message["Bcc"] = bcc
+    message["Subject"] = subject
+    message.attach(MIMEText(body, "html"))
+
+    # Attach file
+    with open(attachment_path, "rb") as attachment:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(attachment_path)}")
+        message.attach(part)
+    
+    # Send email
+    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(message)
+
+    log_email_to_csv(request_id, sender_email, recipient, subject, "sent")
+    email_status[request_id] = "sent"
 
 def validate_email_data(data):
     """Validate the email data."""
@@ -124,6 +181,8 @@ def handle_send_email():
     recipient = data["recipient"]
     body = data["body"]
     is_html = data.get("is_html", False)
+    cc = data.get("cc", None)
+    bcc = data.get("bcc", None)
 
     # Get the email, password, and sender name from the environment variables
     sender_email = os.getenv("USER_EMAIL")
@@ -137,7 +196,7 @@ def handle_send_email():
     request_id = str(uuid.uuid4())
 
     # Send the email asynchronously using the thread pool
-    executor.submit(send_email, subject, recipient, body, is_html, request_id, sender_email, sender_password, sender_name)
+    executor.submit(send_email_with_retry, subject, recipient, body, is_html, request_id, sender_email, sender_password, sender_name, cc, bcc)
 
     return jsonify({"message": "Email request processed", "request_id": request_id}), 200
 
