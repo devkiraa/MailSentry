@@ -158,5 +158,9 @@ if __name__ == "__main__":
     # Initialize CSV log
     initialize_csv_log()
 
-    # Run the Flask server directly
-    app.run(debug=False, use_reloader=False)
+    # Get the port from the environment variable, defaulting to 10000 if not set
+    port = int(os.getenv("PORT", 10000))
+
+    # Run the Flask server on the specified port, bound to 0.0.0.0 to allow external access
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
