@@ -63,6 +63,9 @@ def log_email_to_csv(request_id, sender_email, recipient, subject, status, error
 def send_email(subject, recipient, body, is_html, request_id, sender_email, sender_password, sender_name, cc=None, bcc=None):
     """Send an email to multiple recipients and log the action in a CSV file."""
     try:
+        # Comment or remove unnecessary print statements
+        # print(f"[{request_id}] Sending email to {recipient}...")  # Removed
+        
         message = MIMEMultipart()
         message["From"] = f"{sender_name} <{sender_email}>"
         message["To"] = recipient
@@ -85,10 +88,16 @@ def send_email(subject, recipient, body, is_html, request_id, sender_email, send
         # Log success to the CSV file
         log_email_to_csv(request_id, sender_email, recipient, subject, "sent")
         email_status[request_id] = "sent"  # Update the status
+
+        # Print the request ID and success message for the sender
+        print(f"[{request_id}] Email to {recipient} sent successfully!")
     except Exception as e:
         # Log failure to the CSV file
         log_email_to_csv(request_id, sender_email, recipient, subject, f"failed ({e})")
         email_status[request_id] = f"failed ({e})"  # Update the status
+        # Print the request ID and failure message for the sender
+        print(f"[{request_id}] Failed to send email to {recipient}. Error: {e}")
+
 
 def send_email_with_retry(subject, recipients, body, is_html, request_id, sender_email, sender_password, sender_name, cc=None, bcc=None, retries=3, delay=5):
     """Send an email with retry mechanism using exponential backoff."""
@@ -100,11 +109,9 @@ def send_email_with_retry(subject, recipients, body, is_html, request_id, sender
         except Exception as e:
             attempt += 1
             if attempt < retries:
-                print(f"Attempt {attempt} failed. Retrying in {delay} seconds...")
                 time.sleep(delay)
                 delay *= 2  # Exponential backoff
             else:
-                print(f"Failed to send email after {retries} attempts.")
                 email_status[request_id] = f"failed ({e})"
 
 def send_email_with_attachment(subject, recipient, body, attachment_path, request_id, sender_email, sender_password, sender_name, cc=None, bcc=None):
@@ -218,7 +225,7 @@ if __name__ == "__main__":
     check_and_set_credentials()
 
     # Start the Flask server in a separate thread
-    threading.Thread(target=lambda: app.run(debug=False, use_reloader=False)).start()
+    app.run(host="0.0.0.0", port=5000, debug=True)
     
     # Call the interactive terminal for managing commands
     interactive_terminal()
